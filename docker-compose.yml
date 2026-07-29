@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: nvd-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: nvd_db
+      POSTGRES_USER: nvd_user
+      POSTGRES_PASSWORD: nvd_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nvd_user -d nvd_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ingest-tool:
+    build: .
+    container_name: nvd-ingest-tool
+    environment:
+      DB_HOST: db
+      DB_NAME: nvd_db
+      DB_USER: nvd_user
+      DB_PASS: nvd_password
+    volumes:
+      - ./nvd_files:/data
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
