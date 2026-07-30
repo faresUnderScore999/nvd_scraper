@@ -11,6 +11,9 @@ DB_PASS = os.getenv("DB_PASS", "nvd_password")
 
 def init_db(conn):
     with conn.cursor() as cur:
+        # Enable pg_trgm extension for fuzzy text matching
+        cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+
         # Main CVE table (kept for raw JSON)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS cve_records (
@@ -50,6 +53,10 @@ def init_db(conn):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_vendor ON cve_affected (vendor);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_product ON cve_affected (product);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_versions_version ON cve_versions (version);")
+
+        # Trigram indexes for fuzzy/partial matching on vendor and product
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_vendor_trgm ON cve_affected USING gin (vendor gin_trgm_ops);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_product_trgm ON cve_affected USING gin (product gin_trgm_ops);")
 
     conn.commit()
 
