@@ -257,29 +257,13 @@ docker compose run --rm cron bash -c "python /app/update.py"
 ### Checking update logs
 
 ```bash
-docker exec nvd-cron cat /var/log/cron.log
-```
+# Check the run log
+psql -h localhost -U nvd_user -d nvd_db -c "SELECT id, status, started_at, finished_at, cves_succeeded, cves_failed, pages_succeeded, pages_failed, errors FROM update_run_log;"
 
-### Checking the last update time
+# Check if last_run was updated
+psql -h localhost -U nvd_user -d nvd_db -c "SELECT * FROM update_tracker;"
 
-```sql
-SELECT last_run FROM update_tracker WHERE id = 1;
-```
 
-## Project Structure
-
-```
-├── docker-compose.yml   # Defines db, ingest-tool, and cron services
-├── Dockerfile           # Builds the Python container (with cron installed)
-├── ingest.py            # Initial bulk import: parses JSON files into PostgreSQL
-├── update.py            # Daily incremental update: fetches from NIST API
-├── init.sh              # Shell script: clones NVD JSON feeds via sparse checkout
-├── crontab              # Cron schedule: runs update.py daily at 2:00 AM
-├── .gitignore           # Ignores the local nvd_files/ directory
-└── README.md            # This file
-```
-
-## Configuration
 
 ### Environment Variables
 
