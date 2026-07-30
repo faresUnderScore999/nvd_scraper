@@ -27,11 +27,33 @@ services:
       DB_NAME: nvd_db
       DB_USER: nvd_user
       DB_PASS: nvd_password
+      NVD_API_KEY: ${NVD_API_KEY:-}
     volumes:
       - ./nvd_files:/data
     depends_on:
       db:
         condition: service_healthy
+
+  cron:
+    build: .
+    container_name: nvd-cron
+    restart: always
+    environment:
+      DB_HOST: db
+      DB_NAME: nvd_db
+      DB_USER: nvd_user
+      DB_PASS: nvd_password
+      NVD_API_KEY: ${NVD_API_KEY:-}
+    volumes:
+      - ./nvd_files:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      bash -c "
+        printenv | grep -v 'no_proxy' >> /etc/environment &&
+        cron -f
+      "
 
 volumes:
   postgres_data:
