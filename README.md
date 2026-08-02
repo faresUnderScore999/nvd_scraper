@@ -102,6 +102,28 @@ CREATE TABLE cve_versions (
 | `less_than_or_equal` | `VARCHAR`  | Upper bound (inclusive) for version ranges       |
 | `version_type`       | `VARCHAR`  | Version type (e.g., `semver`, `git`, `custom`)   |
 
+### `cve_cpes` — CPE matches
+
+One row per CPE match entry from `configurations[].nodes[].cpeMatch[]`. This table enables searching by CPE criteria strings (e.g., `cpe:2.3:o:redhat:enterprise_linux:8.0:*:*:*:*:*:*:*`).
+
+```sql
+CREATE TABLE cve_cpes (
+    id SERIAL PRIMARY KEY,
+    cve_id VARCHAR(50) REFERENCES cve_records(cve_id) ON DELETE CASCADE,
+    cpe TEXT NOT NULL,
+    vulnerable BOOLEAN,
+    match_criteria_id VARCHAR(100)
+);
+```
+
+| Column              | Type         | Description                                      |
+|---------------------|-------------|--------------------------------------------------|
+| `id`                | `SERIAL`     | Auto-increment primary key                       |
+| `cve_id`            | `VARCHAR(50)` | Foreign key → `cve_records.cve_id`              |
+| `cpe`               | `TEXT`       | Full CPE criteria string (e.g., `cpe:2.3:o:redhat:enterprise_linux:8.0:*:*:*:*:*:*:*`) |
+| `vulnerable`        | `BOOLEAN`    | Whether the CPE match is marked vulnerable       |
+| `match_criteria_id` | `VARCHAR(100)` | NVD match criteria identifier                  |
+
 ### `update_tracker` — Update tracking
 
 Tracks the last successful API update to avoid gaps or duplicates.
@@ -120,6 +142,8 @@ The following indexes are created automatically for fast lookups:
 - `idx_cve_affected_vendor` on `cve_affected(vendor)`
 - `idx_cve_affected_product` on `cve_affected(product)`
 - `idx_cve_versions_version` on `cve_versions(version)`
+- `idx_cve_cpes_cve_id` on `cve_cpes(cve_id)`
+- `idx_cve_cpes_cpe_trgm` — GIN trigram index on `cve_cpes(cpe)` for fast `LIKE '%...%'` / `ILIKE` searches
 
 ## Prerequisites
 
@@ -233,6 +257,12 @@ JOIN cve_versions v ON v.affected_id = a.id
 WHERE a.vendor = 'apache'
   AND a.product = 'httpd'
   AND v.version = '2.4.50';
+
+-- Find all CVEs matching a CPE pattern (e.g., Red Hat Enterprise Linux 8.x)
+SELECT DISTINCT cve_id, cpe
+FROM cve_cpes
+WHERE cpe LIKE '%redhat%enterprise_linux:8%'
+  AND vulnerable = true;
 ```
 
 ## Daily Updates

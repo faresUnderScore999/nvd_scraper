@@ -136,6 +136,16 @@ def init_db(conn) -> None:
                 version_type VARCHAR
             );
         """)
+        # CPE match table (from configurations[].nodes[].cpeMatch[])
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS cve_cpes (
+                id SERIAL PRIMARY KEY,
+                cve_id VARCHAR(50) REFERENCES cve_records(cve_id) ON DELETE CASCADE,
+                cpe TEXT NOT NULL,
+                vulnerable BOOLEAN,
+                match_criteria_id VARCHAR(100)
+            );
+        """)
         # Indexes
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_vendor ON cve_affected (vendor);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_product ON cve_affected (product);")
@@ -144,6 +154,10 @@ def init_db(conn) -> None:
         # Trigram indexes for fuzzy/partial matching on vendor and product
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_vendor_trgm ON cve_affected USING gin (vendor gin_trgm_ops);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_product_trgm ON cve_affected USING gin (product gin_trgm_ops);")
+
+        # Indexes for CPE lookups (trigram index supports LIKE '%...%' queries)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_cpes_cve_id ON cve_cpes (cve_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_cpes_cpe_trgm ON cve_cpes USING gin (cpe gin_trgm_ops);")
 
         # Update tracker (last successful run timestamp)
         cur.execute("""
@@ -432,6 +446,29 @@ def fetch_cve_page_with_retry(
 # ---------------------------------------------------------------------------
 
 
+def parse_cpe_matches(cve_data: dict) -> list:
+    """
+    Extract CPE match entries from configurations[].nodes[].cpeMatch[].
+    Returns a list of dicts: {cpe, vulnerable, match_criteria_id}.
+    """
+    structured_cpes = []
+
+    configurations = cve_data.get("configurations", [])
+    for config in configurations:
+        for node in config.get("nodes", []):
+            for cpe_match in node.get("cpeMatch", []):
+                criteria = cpe_match.get("criteria", "")
+                if not criteria:
+                    continue
+                structured_cpes.append({
+                    "cpe": criteria,
+                    "vulnerable": cpe_match.get("vulnerable"),
+                    "match_criteria_id": cpe_match.get("matchCriteriaId", "")
+                })
+
+    return structured_cpes
+
+
 def parse_cve_entries(vulnerabilities: list) -> list:
     """Parse the vulnerabilities array from the API response into structured records."""
     results = []
@@ -477,7 +514,10 @@ def parse_cve_entries(vulnerabilities: list) -> list:
                     "versions": versions
                 })
 
-        results.append((cve_id, cve_data, structured_affected))
+        # Extract CPE match structure (configurations[].nodes[].cpeMatch[])
+        structured_cpes = parse_cpe_matches(cve_data)
+
+        results.append((cve_id, cve_data, structured_affected, structured_cpes))
 
     return results
 
@@ -487,7 +527,7 @@ def parse_cve_entries(vulnerabilities: list) -> list:
 # ---------------------------------------------------------------------------
 
 
-def upsert_cve(conn, cve_id: str, cve_data: dict, affected_entries: list) -> None:
+def upsert_cve(conn, cve_id: str, cve_data: dict, affected_entries: list, cpe_entries: list) -> None:
     """Insert or update a single CVE and its related data."""
     with conn.cursor() as cur:
         # 1. Insert/update main CVE record
@@ -532,6 +572,21 @@ def upsert_cve(conn, cve_id: str, cve_data: dict, affected_entries: list) -> Non
                     v["less_than_or_equal"],
                     v["version_type"]
                 ))
+
+        # 4. Delete old CPE data for this CVE
+        cur.execute("DELETE FROM cve_cpes WHERE cve_id = %s;", (cve_id,))
+
+        # 5. Insert new CPE matches
+        for cpe_entry in cpe_entries:
+            cur.execute("""
+                INSERT INTO cve_cpes (cve_id, cpe, vulnerable, match_criteria_id)
+                VALUES (%s, %s, %s, %s);
+            """, (
+                cve_id,
+                cpe_entry["cpe"],
+                cpe_entry["vulnerable"],
+                cpe_entry["match_criteria_id"]
+            ))
 
 
 # ---------------------------------------------------------------------------
@@ -671,14 +726,14 @@ def main() -> None:
         page_cve_failed = 0
         page_cve_skipped = 0
 
-        for cve_id, cve_data, affected_entries in entries:
+        for cve_id, cve_data, affected_entries, cpe_entries in entries:
             if shutdown_requested:
                 logger.warning("Shutdown requested – stopping CVE processing mid-page.")
                 break
 
             counters["cves_total"] += 1
             try:
-                upsert_cve(conn, cve_id, cve_data, affected_entries)
+                upsert_cve(conn, cve_id, cve_data, affected_entries, cpe_entries)
                 page_cve_success += 1
                 counters["cves_succeeded"] += 1
             except Exception as exc:

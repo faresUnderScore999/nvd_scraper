@@ -49,6 +49,17 @@ def init_db(conn):
             );
         """)
 
+        # CPE match table (from configurations[].nodes[].cpeMatch[])
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS cve_cpes (
+                id SERIAL PRIMARY KEY,
+                cve_id VARCHAR(50) REFERENCES cve_records(cve_id) ON DELETE CASCADE,
+                cpe TEXT NOT NULL,
+                vulnerable BOOLEAN,
+                match_criteria_id VARCHAR(100)
+            );
+        """)
+
         # Indexes for fast lookups by vendor, product, version
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_vendor ON cve_affected (vendor);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_product ON cve_affected (product);")
@@ -58,7 +69,34 @@ def init_db(conn):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_vendor_trgm ON cve_affected USING gin (vendor gin_trgm_ops);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_product_trgm ON cve_affected USING gin (product gin_trgm_ops);")
 
+        # Indexes for CPE lookups (trigram index supports LIKE '%...%' queries)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_cpes_cve_id ON cve_cpes (cve_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_cpes_cpe_trgm ON cve_cpes USING gin (cpe gin_trgm_ops);")
+
     conn.commit()
+
+def parse_cpe_matches(cve_data):
+    """
+    Extract CPE match entries from configurations[].nodes[].cpeMatch[].
+    Returns a list of dicts: {cpe, vulnerable, match_criteria_id}.
+    """
+    structured_cpes = []
+
+    configurations = cve_data.get("configurations", [])
+    for config in configurations:
+        for node in config.get("nodes", []):
+            for cpe_match in node.get("cpeMatch", []):
+                criteria = cpe_match.get("criteria", "")
+                if not criteria:
+                    continue
+                structured_cpes.append({
+                    "cpe": criteria,
+                    "vulnerable": cpe_match.get("vulnerable"),
+                    "match_criteria_id": cpe_match.get("matchCriteriaId", "")
+                })
+
+    return structured_cpes
+
 
 def parse_single_cve(file_path):
     try:
@@ -107,7 +145,10 @@ def parse_single_cve(file_path):
                     "versions": versions
                 })
 
-        return (cve_id, cve_data, structured_affected)
+        # Extract CPE match structure (configurations[].nodes[].cpeMatch[])
+        structured_cpes = parse_cpe_matches(cve_data)
+
+        return (cve_id, cve_data, structured_affected, structured_cpes)
 
     except Exception as e:
         print(f"Error parsing {file_path}: {e}")
@@ -133,7 +174,7 @@ def main():
                 if not result:
                     continue
 
-                cve_id, cve_data, affected_entries = result
+                cve_id, cve_data, affected_entries, cpe_entries = result
 
                 # --- 1. Insert/update main CVE record ---
                 cur.execute("""
@@ -178,6 +219,21 @@ def main():
                             v["less_than_or_equal"],
                             v["version_type"]
                         ))
+
+                # --- 4. Delete old CPE data for this CVE ---
+                cur.execute("DELETE FROM cve_cpes WHERE cve_id = %s;", (cve_id,))
+
+                # --- 5. Insert new CPE matches ---
+                for cpe_entry in cpe_entries:
+                    cur.execute("""
+                        INSERT INTO cve_cpes (cve_id, cpe, vulnerable, match_criteria_id)
+                        VALUES (%s, %s, %s, %s);
+                    """, (
+                        cve_id,
+                        cpe_entry["cpe"],
+                        cpe_entry["vulnerable"],
+                        cpe_entry["match_criteria_id"]
+                    ))
 
                 # Commit the transaction for this file
                 conn.commit()
