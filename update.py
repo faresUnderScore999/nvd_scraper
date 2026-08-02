@@ -448,26 +448,56 @@ def fetch_cve_page_with_retry(
 
 def parse_cpe_matches(cve_data: dict) -> list:
     """
-    Extract CPE match entries from configurations[].nodes[].cpeMatch[].
-    Returns a list of dicts: {cpe, vulnerable, match_criteria_id}.
+    Extracts CPE entries from both standard NVD configurations and 
+    vendor-provided affectedData structures, returning a deduplicated list.
     """
     structured_cpes = []
+    seen_cpes = set()
 
+    # -------------------------------------------------------------------
+    # Source 1: Standard NVD configurations (e.g., Microsoft, NVD analyst data)
+    # -------------------------------------------------------------------
     configurations = cve_data.get("configurations", [])
     for config in configurations:
         for node in config.get("nodes", []):
             for cpe_match in node.get("cpeMatch", []):
-                criteria = cpe_match.get("criteria", "")
+                criteria = cpe_match.get("criteria", "").strip()
                 if not criteria:
                     continue
-                structured_cpes.append({
-                    "cpe": criteria,
-                    "vulnerable": cpe_match.get("vulnerable"),
-                    "match_criteria_id": cpe_match.get("matchCriteriaId", "")
-                })
+
+                # Normalize/Deduplicate check
+                if criteria not in seen_cpes:
+                    seen_cpes.add(criteria)
+                    structured_cpes.append({
+                        "cpe": criteria,
+                        "vulnerable": cpe_match.get("vulnerable"),
+                        "match_criteria_id": cpe_match.get("matchCriteriaId", "")
+                    })
+
+    # -------------------------------------------------------------------
+    # Source 2: Vendor-provided affectedData (e.g., Red Hat, FKIE, ADP data)
+    # -------------------------------------------------------------------
+    affected_list = cve_data.get("affected", [])
+    for affected_entry in affected_list:
+        affected_data_list = affected_entry.get("affectedData", [])
+        for ad in affected_data_list:
+            cpes = ad.get("cpes", [])
+            for cpe_str in cpes:
+                if not cpe_str or not isinstance(cpe_str, str):
+                    continue
+
+                clean_cpe = cpe_str.strip()
+                
+                # Deduplicate if already processed from configurations or another affected block
+                if clean_cpe not in seen_cpes:
+                    seen_cpes.add(clean_cpe)
+                    structured_cpes.append({
+                        "cpe": clean_cpe,
+                        "vulnerable": True,  # Default to True for entries listed under affectedData
+                        "match_criteria_id": None  # Vendor-provided CPEs lack NVD matchCriteriaId
+                    })
 
     return structured_cpes
-
 
 def parse_cve_entries(vulnerabilities: list) -> list:
     """Parse the vulnerabilities array from the API response into structured records."""

@@ -75,28 +75,43 @@ def init_db(conn):
 
     conn.commit()
 
-def parse_cpe_matches(cve_data):
-    """
-    Extract CPE match entries from configurations[].nodes[].cpeMatch[].
-    Returns a list of dicts: {cpe, vulnerable, match_criteria_id}.
-    """
+def parse_cpe_matches(cve_data: dict) -> list:
     structured_cpes = []
+    seen_cpes = set()
 
-    configurations = cve_data.get("configurations", [])
+    # 1. Standard NVD configurations
+    configurations = cve_data.get("configurations") or []
     for config in configurations:
-        for node in config.get("nodes", []):
-            for cpe_match in node.get("cpeMatch", []):
-                criteria = cpe_match.get("criteria", "")
-                if not criteria:
-                    continue
-                structured_cpes.append({
-                    "cpe": criteria,
-                    "vulnerable": cpe_match.get("vulnerable"),
-                    "match_criteria_id": cpe_match.get("matchCriteriaId", "")
-                })
+        for node in config.get("nodes") or []:
+            for cpe_match in node.get("cpeMatch") or []:
+                criteria = (cpe_match.get("criteria") or "").strip()
+                if criteria and criteria not in seen_cpes:
+                    seen_cpes.add(criteria)
+                    structured_cpes.append({
+                        "cpe": criteria,
+                        "vulnerable": cpe_match.get("vulnerable"),
+                        "match_criteria_id": cpe_match.get("matchCriteriaId", "")
+                    })
+
+    # 2. Vendor-provided affectedData (e.g. Red Hat)
+    affected_list = cve_data.get("affected") or []
+    for affected_entry in affected_list:
+        affected_data_list = affected_entry.get("affectedData") or []
+        for ad in affected_data_list:
+            # Safely grab 'cpes', defaulting to [] if key missing OR if value is None
+            cpes = ad.get("cpes") or []
+            for cpe_str in cpes:
+                if isinstance(cpe_str, str) and cpe_str.strip():
+                    clean_cpe = cpe_str.strip()
+                    if clean_cpe not in seen_cpes:
+                        seen_cpes.add(clean_cpe)
+                        structured_cpes.append({
+                            "cpe": clean_cpe,
+                            "vulnerable": True,
+                            "match_criteria_id": None
+                        })
 
     return structured_cpes
-
 
 def parse_single_cve(file_path):
     try:
