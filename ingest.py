@@ -56,9 +56,19 @@ def init_db(conn):
                 cve_id VARCHAR(50) REFERENCES cve_records(cve_id) ON DELETE CASCADE,
                 cpe TEXT NOT NULL,
                 vulnerable BOOLEAN,
-                match_criteria_id VARCHAR(100)
+                match_criteria_id VARCHAR(100),
+                version_start_including VARCHAR,
+                version_end_excluding VARCHAR,
+                version_start_excluding VARCHAR,
+                version_end_including VARCHAR
             );
         """)
+
+        # Migrate existing tables that may lack the new CPE version range columns
+        cur.execute("ALTER TABLE cve_cpes ADD COLUMN IF NOT EXISTS version_start_including VARCHAR;")
+        cur.execute("ALTER TABLE cve_cpes ADD COLUMN IF NOT EXISTS version_end_excluding VARCHAR;")
+        cur.execute("ALTER TABLE cve_cpes ADD COLUMN IF NOT EXISTS version_start_excluding VARCHAR;")
+        cur.execute("ALTER TABLE cve_cpes ADD COLUMN IF NOT EXISTS version_end_including VARCHAR;")
 
         # Indexes for fast lookups by vendor, product, version
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_affected_vendor ON cve_affected (vendor);")
@@ -85,12 +95,30 @@ def parse_cpe_matches(cve_data: dict) -> list:
         for node in config.get("nodes") or []:
             for cpe_match in node.get("cpeMatch") or []:
                 criteria = (cpe_match.get("criteria") or "").strip()
-                if criteria and criteria not in seen_cpes:
-                    seen_cpes.add(criteria)
+                # Dedup on criteria + version range fields so that the same
+                # criteria with different ranges (e.g. multiple versionEndExcluding
+                # values) are all preserved.
+                version_start_including = cpe_match.get("versionStartIncluding", "")
+                version_end_excluding = cpe_match.get("versionEndExcluding", "")
+                version_start_excluding = cpe_match.get("versionStartExcluding", "")
+                version_end_including = cpe_match.get("versionEndIncluding", "")
+                match_key = (
+                    criteria,
+                    version_start_including,
+                    version_end_excluding,
+                    version_start_excluding,
+                    version_end_including
+                )
+                if criteria and match_key not in seen_cpes:
+                    seen_cpes.add(match_key)
                     structured_cpes.append({
                         "cpe": criteria,
                         "vulnerable": cpe_match.get("vulnerable"),
-                        "match_criteria_id": cpe_match.get("matchCriteriaId", "")
+                        "match_criteria_id": cpe_match.get("matchCriteriaId", ""),
+                        "version_start_including": version_start_including,
+                        "version_end_excluding": version_end_excluding,
+                        "version_start_excluding": version_start_excluding,
+                        "version_end_including": version_end_including
                     })
 
     # 2. Vendor-provided affectedData (e.g. Red Hat)
@@ -103,12 +131,19 @@ def parse_cpe_matches(cve_data: dict) -> list:
             for cpe_str in cpes:
                 if isinstance(cpe_str, str) and cpe_str.strip():
                     clean_cpe = cpe_str.strip()
-                    if clean_cpe not in seen_cpes:
-                        seen_cpes.add(clean_cpe)
+                    # No version range fields are available in affectedData, so
+                    # dedup against the same criteria WITHOUT any range bounds.
+                    match_key = (clean_cpe, "", "", "", "")
+                    if match_key not in seen_cpes:
+                        seen_cpes.add(match_key)
                         structured_cpes.append({
                             "cpe": clean_cpe,
                             "vulnerable": True,
-                            "match_criteria_id": None
+                            "match_criteria_id": None,
+                            "version_start_including": "",
+                            "version_end_excluding": "",
+                            "version_start_excluding": "",
+                            "version_end_including": ""
                         })
 
     return structured_cpes
@@ -241,13 +276,20 @@ def main():
                 # --- 5. Insert new CPE matches ---
                 for cpe_entry in cpe_entries:
                     cur.execute("""
-                        INSERT INTO cve_cpes (cve_id, cpe, vulnerable, match_criteria_id)
-                        VALUES (%s, %s, %s, %s);
+                        INSERT INTO cve_cpes
+                            (cve_id, cpe, vulnerable, match_criteria_id,
+                             version_start_including, version_end_excluding,
+                             version_start_excluding, version_end_including)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
                     """, (
                         cve_id,
                         cpe_entry["cpe"],
                         cpe_entry["vulnerable"],
-                        cpe_entry["match_criteria_id"]
+                        cpe_entry["match_criteria_id"],
+                        cpe_entry["version_start_including"],
+                        cpe_entry["version_end_excluding"],
+                        cpe_entry["version_start_excluding"],
+                        cpe_entry["version_end_including"]
                     ))
 
                 # Commit the transaction for this file

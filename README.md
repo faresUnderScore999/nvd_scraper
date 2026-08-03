@@ -112,17 +112,25 @@ CREATE TABLE cve_cpes (
     cve_id VARCHAR(50) REFERENCES cve_records(cve_id) ON DELETE CASCADE,
     cpe TEXT NOT NULL,
     vulnerable BOOLEAN,
-    match_criteria_id VARCHAR(100)
+    match_criteria_id VARCHAR(100),
+    version_start_including VARCHAR,
+    version_end_excluding VARCHAR,
+    version_start_excluding VARCHAR,
+    version_end_including VARCHAR
 );
 ```
 
-| Column              | Type         | Description                                      |
-|---------------------|-------------|--------------------------------------------------|
-| `id`                | `SERIAL`     | Auto-increment primary key                       |
-| `cve_id`            | `VARCHAR(50)` | Foreign key → `cve_records.cve_id`              |
-| `cpe`               | `TEXT`       | Full CPE criteria string (e.g., `cpe:2.3:o:redhat:enterprise_linux:8.0:*:*:*:*:*:*:*`) |
-| `vulnerable`        | `BOOLEAN`    | Whether the CPE match is marked vulnerable       |
-| `match_criteria_id` | `VARCHAR(100)` | NVD match criteria identifier                  |
+| Column                     | Type         | Description                                      |
+|----------------------------|-------------|--------------------------------------------------|
+| `id`                       | `SERIAL`     | Auto-increment primary key                       |
+| `cve_id`                   | `VARCHAR(50)` | Foreign key → `cve_records.cve_id`              |
+| `cpe`                      | `TEXT`       | Full CPE criteria string (e.g., `cpe:2.3:o:redhat:enterprise_linux:8.0:*:*:*:*:*:*:*`) |
+| `vulnerable`               | `BOOLEAN`    | Whether the CPE match is marked vulnerable       |
+| `match_criteria_id`        | `VARCHAR(100)` | NVD match criteria identifier                  |
+| `version_start_including`  | `VARCHAR`    | Lowest version affected (inclusive) from `versionStartIncluding` |
+| `version_end_excluding`    | `VARCHAR`    | Highest version affected (exclusive) from `versionEndExcluding` |
+| `version_start_excluding`  | `VARCHAR`    | Lowest version affected (exclusive) from `versionStartExcluding` |
+| `version_end_including`    | `VARCHAR`    | Highest version affected (inclusive) from `versionEndIncluding` |
 
 ### `update_tracker` — Update tracking
 
