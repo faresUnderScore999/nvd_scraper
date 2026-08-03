@@ -116,7 +116,12 @@ CREATE TABLE cve_cpes (
     version_start_including VARCHAR,
     version_end_excluding VARCHAR,
     version_start_excluding VARCHAR,
-    version_end_including VARCHAR
+    version_end_including VARCHAR,
+    config_index INTEGER,
+    config_operator VARCHAR,
+    node_index INTEGER,
+    node_operator VARCHAR,
+    node_negate BOOLEAN
 );
 ```
 
@@ -131,6 +136,59 @@ CREATE TABLE cve_cpes (
 | `version_end_excluding`    | `VARCHAR`    | Highest version affected (exclusive) from `versionEndExcluding` |
 | `version_start_excluding`  | `VARCHAR`    | Lowest version affected (exclusive) from `versionStartExcluding` |
 | `version_end_including`    | `VARCHAR`    | Highest version affected (inclusive) from `versionEndIncluding` |
+| `config_index`             | `INTEGER`    | 0-based index of the configuration within `configurations[]`; acts as the group key for `AND` configurations |
+| `config_operator`          | `VARCHAR`    | Operator of the parent configuration (`AND` or `OR`) |
+| `node_index`               | `INTEGER`    | 0-based index of the node within the configuration (nested child nodes share the same `node_index`) |
+| `node_operator`            | `VARCHAR`    | Operator of the node (`AND` or `OR`, e.g. the nested `OR` inside an `AND` config) |
+| `node_negate`              | `BOOLEAN`    | Negation flag of the node (`negate`)            |
+
+> **Note on `AND` configurations:** NVD uses `AND` configurations to express compound
+> vulnerable conditions (e.g., firmware **AND** hardware both present). All CPE rows
+> belonging to the same `AND` group share the same `(cve_id, config_index)` pair and
+> must **all** be matched for the configuration to apply.
+
+-- Find CVEs where every node in an AND group is matched (e.g. both firmware and hardware present)
+SELECT cpe.cve_id
+FROM cve_cpes cpe
+WHERE cpe.config_operator = 'AND'
+GROUP BY cpe.cve_id, cpe.config_index
+HAVING COUNT(DISTINCT cpe.node_index) = (
+    SELECT COUNT(DISTINCT cpe2.node_index)
+    FROM cve_cpes cpe2
+    WHERE cpe2.cve_id = cpe.cve_id
+      AND cpe2.config_index = cpe.config_index
+);
+
+### `cve_weaknesses` — Weakness (CWE) information
+
+One row per weakness description entry from `weaknesses[].description[]`. This table enables searching CVEs by CWE identifier (e.g., `CWE-226`).
+
+```sql
+CREATE TABLE cve_weaknesses (
+    id SERIAL PRIMARY KEY,
+    cve_id VARCHAR(50) REFERENCES cve_records(cve_id) ON DELETE CASCADE,
+    source VARCHAR,
+    type VARCHAR,
+    lang VARCHAR,
+    value TEXT
+);
+```
+
+| Column  | Type         | Description                                      |
+|---------|-------------|--------------------------------------------------|
+| `id`    | `SERIAL`     | Auto-increment primary key                       |
+| `cve_id`| `VARCHAR(50)` | Foreign key → `cve_records.cve_id`              |
+| `source`| `VARCHAR`    | Source of the weakness (e.g., `nvd@nist.gov`, `arm-security@arm.com`) |
+| `type`  | `VARCHAR`    | Weakness type (`Primary`, `Secondary`, etc.)     |
+| `lang`  | `VARCHAR`    | Language of the description (e.g., `en`)         |
+| `value` | `TEXT`       | CWE identifier (e.g., `CWE-226`)                 |
+
+```sql
+-- Find all CVEs with a specific CWE
+SELECT cve_id, source, type, value
+FROM cve_weaknesses
+WHERE value = 'CWE-226';
+```
 
 ### `update_tracker` — Update tracking
 
