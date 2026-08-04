@@ -408,7 +408,18 @@ To also remove the database volume (deletes all ingested data):
 ```bash
 docker compose down -v
 ```
-
+##test init
+```bash
+find CVE-2025 -type f -name "*.json" | wc -l
+44998
+nvd_db=# SELECT COUNT(DISTINCT cve_id)
+FROM cve_records
+WHERE cve_id LIKE 'CVE-2025-%';
+ count 
+-------
+ 44998
+(1 row)
+```bash
 ## Dependencies
 
 - **Python 3.11** (slim image) with `psycopg2-binary` (PostgreSQL adapter)
