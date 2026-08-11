@@ -121,9 +121,12 @@ def init_db(conn) -> None:
                 product TEXT,
                 default_status VARCHAR,
                 repo TEXT,
-                program_files TEXT[]
+                program_files TEXT[],
+                cpes TEXT[]
             );
         """)
+        # Migrate existing tables that may lack the cpes column
+        cur.execute("ALTER TABLE cve_affected ADD COLUMN IF NOT EXISTS cpes TEXT[];")
         # Version details table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS cve_versions (
@@ -652,6 +655,7 @@ def parse_cve_entries(vulnerabilities: list) -> list:
                 default_status = ad.get("defaultStatus", "")
                 repo = ad.get("repo", "")
                 program_files = ad.get("programFiles", [])
+                cpes = ad.get("cpes") or []
 
                 versions = []
                 for v in ad.get("versions", []):
@@ -670,6 +674,7 @@ def parse_cve_entries(vulnerabilities: list) -> list:
                     "default_status": default_status,
                     "repo": repo,
                     "program_files": program_files,
+                    "cpes": cpes,
                     "versions": versions
                 })
 
@@ -707,8 +712,8 @@ def upsert_cve(conn, cve_id: str, cve_data: dict, affected_entries: list, cpe_en
         for aff in affected_entries:
             cur.execute("""
                 INSERT INTO cve_affected
-                    (cve_id, source, vendor, product, default_status, repo, program_files)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (cve_id, source, vendor, product, default_status, repo, program_files, cpes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id;
             """, (
                 cve_id,
@@ -717,7 +722,8 @@ def upsert_cve(conn, cve_id: str, cve_data: dict, affected_entries: list, cpe_en
                 aff["product"],
                 aff["default_status"],
                 aff["repo"],
-                aff["program_files"]
+                aff["program_files"],
+                aff["cpes"]
             ))
             affected_id = cur.fetchone()[0]
 

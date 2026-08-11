@@ -32,9 +32,13 @@ def init_db(conn):
                 product TEXT,
                 default_status VARCHAR,
                 repo TEXT,
-                program_files TEXT[]
+                program_files TEXT[],
+                cpes TEXT[]
             );
         """)
+
+        # Migrate existing tables that may lack the cpes column
+        cur.execute("ALTER TABLE cve_affected ADD COLUMN IF NOT EXISTS cpes TEXT[];")
 
         # Version details table
         cur.execute("""
@@ -216,7 +220,7 @@ def parse_cpe_matches(cve_data: dict) -> list:
                         seen_cpes.add(match_key)
                         structured_cpes.append({
                             "cpe": clean_cpe,
-                            "vulnerable": True,
+                            "vulnerable": ad.get("vulnerable"),
                             "match_criteria_id": None,
                             "version_start_including": "",
                             "version_end_excluding": "",
@@ -283,6 +287,7 @@ def parse_single_cve(file_path):
                 default_status = ad.get("defaultStatus", "")
                 repo = ad.get("repo", "")
                 program_files = ad.get("programFiles", [])   # list of strings
+                cpes = ad.get("cpes") or []                  # list of CPE strings
 
                 versions = []
                 for v in ad.get("versions", []):
@@ -301,6 +306,7 @@ def parse_single_cve(file_path):
                     "default_status": default_status,
                     "repo": repo,
                     "program_files": program_files,
+                    "cpes": cpes,
                     "versions": versions
                 })
 
@@ -353,8 +359,8 @@ def main():
                 for aff in affected_entries:
                     cur.execute("""
                         INSERT INTO cve_affected
-                            (cve_id, source, vendor, product, default_status, repo, program_files)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            (cve_id, source, vendor, product, default_status, repo, program_files, cpes)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id;
                     """, (
                         cve_id,
@@ -363,7 +369,8 @@ def main():
                         aff["product"],
                         aff["default_status"],
                         aff["repo"],
-                        aff["program_files"]   # list will be adapted to TEXT[]
+                        aff["program_files"],
+                        aff["cpes"]   # list will be adapted to TEXT[]
                     ))
                     affected_id = cur.fetchone()[0]
 

@@ -206,6 +206,14 @@ def db_sample_cpe(conn, cve_id: str):
         return row[0] if row else None
 
 
+def db_affected_cpes(conn, cve_id: str) -> list:
+    """Return the cpes arrays from cve_affected for a CVE (SELECT only)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT cpes FROM cve_affected WHERE cve_id = %s;", (cve_id,))
+        rows = cur.fetchall()
+    return [row[0] for row in rows if row[0] is not None]
+
+
 # ---------------------------------------------------------------------------
 # Comparison
 # ---------------------------------------------------------------------------
@@ -271,6 +279,20 @@ def compare_cve(conn, cve_id: str, affected_entries: list, cpe_entries: list, we
         )
     else:
         checks.append(("cve_cpes sample cpe", True, "API has no CPE data (skipped)"))
+
+    # --- cve_affected.cpes array check (new field) ---
+    api_affected_cpes = [a.get("cpes") or [] for a in affected_entries]
+    if any(api_affected_cpes):
+        db_cpes = db_affected_cpes(conn, cve_id)
+        # Compare each affected entry's cpes list against the DB arrays.
+        # The DB stores one row per affected entry, so we compare as sets of lists.
+        ok = sorted(map(sorted, api_affected_cpes)) == sorted(map(sorted, db_cpes))
+        checks.append(
+            ("cve_affected.cpes array", ok,
+             f"DB={db_cpes} vs API={api_affected_cpes}")
+        )
+    else:
+        checks.append(("cve_affected.cpes array", True, "API has no cpes data (skipped)"))
 
     return checks
 

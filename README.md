@@ -6,7 +6,7 @@ A tool that downloads **National Vulnerability Database (NVD)** CVE JSON feeds a
 
 This project automates the process of fetching CVE (Common Vulnerabilities and Exposures) data and storing it in a normalized PostgreSQL database. It has two modes:
 
-1. **Initial bulk import** — Uses a sparse Git clone to download CVE JSON feeds from [fkie-cad/nvd-json-data-feeds](https://github.com/fkie-cad/nvd-json-data-feeds) (CVE-2025 and CVE-2026 by default), then parses and inserts each record into three related tables.
+1. **Initial bulk import** — Uses a sparse Git clone to download CVE JSON feeds from [fkie-cad/nvd-json-data-feeds](https://github.com/fkie-cad/nvd-json-data-feeds) (CVE-2024, CVE-2025, and CVE-2026 by default — configurable via `NVD_YEARS`), then parses and inserts each record into three related tables.
 2. **Daily incremental updates** — A cron service runs `update.py` every day at 2:00 AM, fetching only CVEs modified in the last 24 hours from the NIST NVD API 2.0 using your API key.
 
 ### Architecture
@@ -245,7 +245,7 @@ This command will:
 
 1. Start a **PostgreSQL 15** container (`db`) with the database `nvd_db`, user `nvd_user`, and password `nvd_password`.
 2. Build the **ingest-tool** container, which:
-   - Runs `init.sh` — clones the NVD JSON feeds (CVE-2025 and CVE-2026) from [fkie-cad/nvd-json-data-feeds](https://github.com/fkie-cad/nvd-json-data-feeds) into the `/data` volume (mapped to `./nvd_files` on your host).
+   - Runs `init.sh` — clones the NVD JSON feeds (configurable years via `NVD_YEARS`, default `2024 2025 2026`) from [fkie-cad/nvd-json-data-feeds](https://github.com/fkie-cad/nvd-json-data-feeds) into the `/data` volume (mapped to `./nvd_files` on your host).
    - Runs `ingest.py` — scans all `.json` files under `/data`, parses them, and inserts/upserts each CVE record into the three normalized tables.
 3. Start the **cron** container, which runs `update.py` daily at 2:00 AM to fetch new/modified CVEs from the NIST API.
 
@@ -370,6 +370,7 @@ psql -h localhost -U nvd_user -d nvd_db -c "SELECT * FROM update_tracker;"
 | `DB_USER`     | `nvd_user`     | PostgreSQL user                                  |
 | `DB_PASS`     | `nvd_password` | PostgreSQL password                              |
 | `NVD_API_KEY` | *(empty)*      | NIST NVD API key for daily updates (set in `.env`) |
+| `NVD_YEARS`   | `2024 2025 2026` | Space-separated list of CVE years to import during the initial bulk ingest (e.g., `2005 2006`) |
 
 ### Setting the API key
 
@@ -383,10 +384,11 @@ The `.env` file is automatically loaded by Docker Compose. The API key is passed
 
 ### Changing CVE Years
 
-To download different CVE years for the initial import, edit the `sparse-checkout set` line in `init.sh`:
+To download different CVE years for the initial import, set the `NVD_YEARS` variable in your `.env` file (space-separated):
 
 ```bash
-git sparse-checkout set CVE-2025 CVE-2026 CVE-2024   # Add 2024
+# .env
+NVD_YEARS=2005 2006
 ```
 
 Then rebuild and run:
@@ -396,6 +398,8 @@ docker compose down
 rm -rf nvd_files
 docker compose up --build
 ```
+
+> **Note:** If the `nvd_files` directory already contains a git repo, `init.sh` will **reuse** it and only download the newly requested years (no full re-clone). To force a complete fresh download, remove the `nvd_files` directory first.
 
 ## Stopping the Services
 
